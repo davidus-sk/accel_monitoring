@@ -83,6 +83,15 @@ def main():
         print("No sensors found.")
         sys.exit(1)
 
+    # Flush stale data from previous session
+    time.sleep(0.05)
+    for bus_num, addr in active:
+        try:
+            read_accel(bus_handles[bus_num], addr)
+        except Exception:
+            pass
+    time.sleep(0.05)
+
     print("")
     print("Listening on %d sensor(s)... tap away!" % len(active))
     print("")
