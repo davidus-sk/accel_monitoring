@@ -2,11 +2,13 @@
 """
 H3LIS331DL Dual High-G Accelerometer Logger
 Binary output, per-sensor files, 5MB rotation with atomic rename.
+Optional TCP live stream for field validation.
 
 Usage:
-  python3 h3lis331dl.py <i2c_bus_number>
+  python3 h3lis331dl.py <i2c_bus_number> [tcp_port]
   python3 h3lis331dl.py 0
-  python3 h3lis331dl.py 3
+  python3 h3lis331dl.py 0 6000
+  python3 h3lis331dl.py 3 6001
 
 Sensors per bus (auto-detected):
   0x19 (SA0 high) and 0x18 (SA0 low)
@@ -14,6 +16,10 @@ Sensors per bus (auto-detected):
 Output files:
   /dev/shm/raw/accel_bus0_0x19_1770773050.dat.tmp  (writing)
   /dev/shm/raw/accel_bus0_0x19_1770773050.dat      (sealed, ready for analysis)
+
+Live stream (when port specified and client connected):
+  nc localhost 6000
+  Output: timestamp,bus,addr,accel_x_g,accel_y_g,accel_z_g
 
 Binary format:
   Header (22 bytes):
@@ -41,6 +47,7 @@ import signal
 import traceback
 import os
 import logging
+import socket
 
 # --------- CONFIGURATION ---------
 
@@ -83,6 +90,9 @@ MAX_FILE_BYTES  = 5 * 1024 * 1024  # 5MB per file
 MAX_CONSECUTIVE_ERRORS = 50
 ERROR_COOLDOWN_SEC     = 0.5
 I2C_RESET_COOLDOWN_SEC = 3.0
+
+# Live stream
+ACCEPT_CHECK_INTERVAL  = 100  # check for new client every N samples
 
 # Logging
 LOG_DIR = "/tmp"
@@ -186,11 +196,119 @@ class SensorFile:
         self._seal_file()
 
 
+# --------- LIVE STREAM ---------
+
+class LiveStream:
+    """Non-blocking TCP server for optional live CSV streaming.
+    Zero overhead when no client is connected.
+    One client at a time, best-effort delivery."""
+
+    def __init__(self, port, bus_num, log):
+        self.port = port
+        self.bus_num = bus_num
+        self.log = log
+        self.server_sock = None
+        self.client_sock = None
+        self.client_addr = None
+
+    def start(self):
+        """Bind and listen. Returns True on success."""
+        try:
+            self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server_sock.setblocking(False)
+            self.server_sock.bind(("0.0.0.0", self.port))
+            self.server_sock.listen(1)
+            self.log.info("Live stream listening on port %d", self.port)
+            return True
+        except Exception as e:
+            self.log.error("Failed to start live stream on port %d: %s",
+                           self.port, e)
+            self.server_sock = None
+            return False
+
+    def check_accept(self):
+        """Non-blocking check for new client. Call periodically."""
+        if self.server_sock is None:
+            return
+        try:
+            conn, addr = self.server_sock.accept()
+            if self.client_sock is not None:
+                # Already have a client, reject new one
+                try:
+                    conn.sendall(b"ERROR: another client is connected\n")
+                    conn.close()
+                except Exception:
+                    pass
+                return
+            conn.setblocking(False)
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            self.client_sock = conn
+            self.client_addr = addr
+            self.log.info("Live stream client connected: %s:%d",
+                          addr[0], addr[1])
+        except BlockingIOError:
+            pass
+        except Exception:
+            pass
+
+    def send_sample(self, ts, addr, ax, ay, az):
+        """Send one CSV line to the connected client.
+        Returns False if client was dropped."""
+        if self.client_sock is None:
+            return True
+        line = "%.4f,%d,0x%02x,%.3f,%.3f,%.3f\n" % (
+            ts, self.bus_num, addr, ax, ay, az)
+        try:
+            self.client_sock.sendall(line.encode())
+            return True
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            self._drop_client("disconnected")
+            return False
+        except BlockingIOError:
+            self._drop_client("too slow")
+            return False
+        except OSError:
+            self._drop_client("connection error")
+            return False
+        except Exception:
+            self._drop_client("unexpected error")
+            return False
+
+    def has_client(self):
+        """Check if a client is currently connected."""
+        return self.client_sock is not None
+
+    def _drop_client(self, reason):
+        """Clean up client connection."""
+        if self.client_sock is not None:
+            addr_str = "%s:%d" % (self.client_addr[0], self.client_addr[1]) \
+                if self.client_addr else "unknown"
+            self.log.info("Live stream client %s: %s", addr_str, reason)
+            try:
+                self.client_sock.close()
+            except Exception:
+                pass
+            self.client_sock = None
+            self.client_addr = None
+
+    def close(self):
+        """Shut down server and client."""
+        self._drop_client("shutdown")
+        if self.server_sock is not None:
+            try:
+                self.server_sock.close()
+            except Exception:
+                pass
+            self.server_sock = None
+
+
 # --------- MAIN LOGGER ---------
 
 class AccelLogger:
-    def __init__(self, i2c_bus):
+    def __init__(self, i2c_bus, tcp_port=None):
         self.i2c_bus = i2c_bus
+        self.tcp_port = tcp_port
         self.bus = None
         self.running = True
         self.sample_count = 0
@@ -198,6 +316,7 @@ class AccelLogger:
         self.consecutive_errors = 0
         self.active_sensors = []
         self.sensor_files = {}
+        self.live_stream = None
 
         log_path = os.path.join(LOG_DIR, f"accel_bus{i2c_bus}.log")
         self.log = logging.getLogger(f"accel_bus{i2c_bus}")
@@ -309,6 +428,13 @@ class AccelLogger:
             self.log.error("Cannot create output dir, exiting")
             sys.exit(1)
 
+        # Start live stream if port specified
+        if self.tcp_port is not None:
+            self.live_stream = LiveStream(self.tcp_port, self.i2c_bus, self.log)
+            if not self.live_stream.start():
+                self.log.warning("Live stream unavailable, continuing without it")
+                self.live_stream = None
+
         # Init sensors with retry
         while self.running:
             self.active_sensors = self.init_all_sensors()
@@ -326,6 +452,7 @@ class AccelLogger:
 
         last_status_time = time.time()
         next_sample_time = time.time()
+        loop_count = 0
 
         while self.running:
             try:
@@ -337,12 +464,26 @@ class AccelLogger:
                 ts = time.time()
                 next_sample_time = ts + SAMPLE_INTERVAL
 
+                # Check for live stream client periodically
+                if self.live_stream is not None and \
+                        loop_count % ACCEPT_CHECK_INTERVAL == 0:
+                    self.live_stream.check_accept()
+
+                streaming = self.live_stream is not None and \
+                    self.live_stream.has_client()
+
                 for s in self.active_sensors:
                     ax, ay, az = read_accel(self.bus, s["addr"])
                     self.sensor_files[s["addr"]].write_sample(ts, ax, ay, az)
 
+                    # Send to live stream only if client connected
+                    if streaming:
+                        self.live_stream.send_sample(
+                            ts, s["addr"], ax, ay, az)
+
                 self.sample_count += 1
                 self.consecutive_errors = 0
+                loop_count += 1
 
                 # Status every 5 minutes
                 if now - last_status_time >= 300:
@@ -352,9 +493,15 @@ class AccelLogger:
                         file_info.append("0x%02x:%dKB" % (
                             s["addr"],
                             sf.bytes_written // 1024 if sf.fd else 0))
-                    self.log.info("OK: %d samples, %d errors, files=[%s]",
+                    stream_status = ""
+                    if self.live_stream is not None:
+                        if self.live_stream.has_client():
+                            stream_status = ", stream=active"
+                        else:
+                            stream_status = ", stream=idle"
+                    self.log.info("OK: %d samples, %d errors, files=[%s]%s",
                                   self.sample_count, self.error_count,
-                                  ", ".join(file_info))
+                                  ", ".join(file_info), stream_status)
                     last_status_time = now
 
             except IOError as e:
@@ -387,6 +534,8 @@ class AccelLogger:
         try:
             for sf in self.sensor_files.values():
                 sf.close()
+            if self.live_stream is not None:
+                self.live_stream.close()
             if self.bus:
                 for s in self.active_sensors:
                     try:
@@ -401,8 +550,8 @@ class AccelLogger:
 
 
 def main():
-    if len(sys.argv) != 2:
-        print("Usage: h3lis331dl.py <i2c_bus_number>")
+    if len(sys.argv) < 2 or len(sys.argv) > 3:
+        print("Usage: h3lis331dl.py <i2c_bus_number> [tcp_port]")
         sys.exit(1)
 
     try:
@@ -411,7 +560,18 @@ def main():
         print("Error: bus number must be an integer")
         sys.exit(1)
 
-    logger = AccelLogger(bus_num)
+    tcp_port = None
+    if len(sys.argv) == 3:
+        try:
+            tcp_port = int(sys.argv[2])
+            if tcp_port < 1 or tcp_port > 65535:
+                print("Error: port must be 1-65535")
+                sys.exit(1)
+        except ValueError:
+            print("Error: port must be an integer")
+            sys.exit(1)
+
+    logger = AccelLogger(bus_num, tcp_port)
     try:
         logger.run()
     except Exception as e:

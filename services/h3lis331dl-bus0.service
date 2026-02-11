@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/app/monitoring/accel
-ExecStart=/usr/bin/python3 /app/monitoring/accel/h3lis331dl.py 0
+ExecStart=/usr/bin/python3 /app/monitoring/accel/h3lis331dl.py 0 6000
 
 Restart=always
 RestartSec=5
