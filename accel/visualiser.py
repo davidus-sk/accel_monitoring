@@ -3,99 +3,128 @@
 import socket
 import curses
 import math
+import sys
 
 # Configuration
 TCP_IP = '127.0.0.1'
-TCP_PORT = 6000
 BUFFER_SIZE = 1024
-SCALE = 25 
+SCALE = 20
 
-# Dictionary to track the maximum absolute value for each component and the magnitude
-max_values = {"X": 0.0, "Y": 0.0, "Z": 0.0, "Mag": 0.0}
+# State storage: tracks data for every sensor ID encountered
+# Format: { '0x19': {'X': 0.0, 'Y': 0.0, 'Z': 0.0, 'MaxX': 0.0, ...}, '0x20': {...} }
+sensors = {}
 
-def draw_row(stdscr, row, label, current_val, key):
-    # Update global max
-    if abs(current_val) > max_values[key]:
-        max_values[key] = abs(current_val)
+def update_sensor_data(parts):
+    """Parses CSV parts and updates the sensor's state."""
+    try:
+        ts = parts[0]
+        bus = parts[1]
+        sid = parts[2]
+        ax, ay, az = float(parts[3]), float(parts[4]), float(parts[5])
+        mag = math.sqrt(ax**2 + ay**2 + az**2)
 
-    # Format the text display
-    display_text = f"{label:10}: {current_val:>7.3f} g  [Max: {max_values[key]:>7.3f} g] | "
+        if sid not in sensors:
+            sensors[sid] = {
+                'X': 0, 'Y': 0, 'Z': 0, 'Mag': 0,
+                'max_X': 0, 'max_Y': 0, 'max_Z': 0, 'max_Mag': 0,
+                'ts': ts, 'bus': bus
+            }
 
-    # Calculate bar length
-    bar_len = int(abs(current_val) * SCALE)
-    max_x = curses.COLS - len(display_text) - 5
-    bar_len = min(bar_len, max_x)
+        s = sensors[sid]
+        s['X'], s['Y'], s['Z'], s['Mag'] = ax, ay, az, mag
+        s['ts'], s['bus'] = ts, bus
 
-    # Use different characters for component bars vs Magnitude
-    char = "█" if key != "Mag" else "▓"
-    bar = char * bar_len
+        # Update maximums
+        s['max_X'] = max(s['max_X'], abs(ax))
+        s['max_Y'] = max(s['max_Y'], abs(ay))
+        s['max_Z'] = max(s['max_Z'], abs(az))
+        s['max_Mag'] = max(s['max_Mag'], abs(mag))
 
-    # Render to screen
-    stdscr.addstr(row, 2, display_text)
-    stdscr.addstr(row, len(display_text) + 2, bar)
-    stdscr.clrtoeol()
+    except (ValueError, IndexError):
+        pass
 
-def main(stdscr):
+def draw_sensor(stdscr, sid, start_row):
+    """Draws the visualization block for a single sensor."""
+    s = sensors[sid]
+
+    # Header
+    stdscr.addstr(start_row, 2, f"SENSOR ID: {sid} | Bus: {s['bus']} | TS: {s['ts']}", curses.A_BOLD | curses.A_UNDERLINE)
+
+    # Data Rows
+    metrics = [
+        ("Acc X", s['X'], s['max_X'], 1),
+        ("Acc Y", s['Y'], s['max_Y'], 1),
+        ("Acc Z", s['Z'], s['max_Z'], 1),
+        ("MAGNITUDE", s['Mag'], s['max_Mag'], 2)
+    ]
+
+    current_row = start_row + 1
+    for label, val, m_val, color_pair in metrics:
+        if label == "MAGNITUDE":
+            current_row += 1 # Add spacing before magnitude
+
+        display_text = f"{label:10}: {val:>7.3f} g [Max: {m_val:>7.3f} g] | "
+        bar_len = min(int(abs(val) * SCALE), curses.COLS - len(display_text) - 5)
+        bar = "█" * max(0, bar_len)
+
+        stdscr.addstr(current_row, 2, display_text)
+        stdscr.addstr(current_row, len(display_text) + 2, bar, curses.color_pair(color_pair))
+        current_row += 1
+
+    return current_row + 1 # Return next available row position
+
+def main(stdscr, port):
+    curses.start_color()
+    curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
+    curses.init_pair(2, curses.COLOR_RED, curses.COLOR_BLACK)
     curses.curs_set(0)
     stdscr.nodelay(True)
-    stdscr.clear()
 
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(5.0)
-        s.connect((TCP_IP, TCP_PORT))
+        s.connect((TCP_IP, port))
     except Exception as e:
-        print(f"Error: {e}")
-        return
-
-    stdscr.addstr(1, 2, f"IMU MONITOR | Port: {TCP_PORT} | 'r' to reset | 'q' to quit")
-    stdscr.addstr(2, 2, "=" * (curses.COLS - 4))
+        return f"Connection Error: {e}"
 
     data_buffer = ""
-
     while True:
-        key_input = stdscr.getch()
-        if key_input == ord('q'):
-            break
-        elif key_input == ord('r'):
-            for k in max_values: max_values[k] = 0.0
+        key = stdscr.getch()
+        if key == ord('q'): break
+        if key == ord('r'):
+            for sid in sensors:
+                for k in sensors[sid]:
+                    if k.startswith('max_'): sensors[sid][k] = 0
 
         try:
             chunk = s.recv(BUFFER_SIZE).decode('utf-8')
             if not chunk: break
-
             data_buffer += chunk
+
             if "\n" in data_buffer:
                 lines = data_buffer.split("\n")
                 data_buffer = lines.pop()
 
                 for line in lines:
-                    parts = line.strip().split(',')
-                    if len(parts) == 6:
-                        try:
-                            # Parse acceleration components
-                            ax, ay, az = float(parts[3]), float(parts[4]), float(parts[5])
+                    update_sensor_data(line.strip().split(','))
 
-                            # Calculate Magnitude: sqrt(x^2 + y^2 + z^2)
-                            mag = math.sqrt(ax**2 + ay**2 + az**2)
+                # UI Update
+                stdscr.erase()
+                stdscr.addstr(0, 2, f"MULTI-IMU MONITOR | Port: {port} | 'q' Quit | 'r' Reset Max", curses.A_BOLD)
 
-                            # Draw individual components
-                            draw_row(stdscr, 4, "Acc X", ax, "X")
-                            draw_row(stdscr, 5, "Acc Y", ay, "Y")
-                            draw_row(stdscr, 6, "Acc Z", az, "Z")
+                row = 2
+                # Sort IDs so the display doesn't jump around
+                for sid in sorted(sensors.keys()):
+                    row = draw_sensor(stdscr, sid, row)
 
-                            # Draw Magnitude row
-                            stdscr.addstr(7, 2, "-" * (curses.COLS - 4))
-                            draw_row(stdscr, 8, "MAGNITUDE", mag, "Mag")
-                            stdscr.addstr(10, 2, f"Latest Timestamp: {parts[0]}")
-                            stdscr.refresh()
-                        except ValueError:
-                            continue
-
+                stdscr.refresh()
         except Exception:
             continue
-
     s.close()
 
 if __name__ == "__main__":
-    curses.wrapper(main)
+    if len(sys.argv) < 2:
+        print("Usage: python imu_vis.py <port>")
+        sys.exit(1)
+    err = curses.wrapper(main, int(sys.argv[1]))
+    if err: print(err)
