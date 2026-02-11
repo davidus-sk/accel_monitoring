@@ -1,0 +1,3 @@
+*/5 *	* * *	root	/app/monitoring/sender/sender_accel.py "/dev/shm/accel*.dat" accel >> /tmp/accel_sender.log
+*/5 *	* * *	root	/app/monitoring/sender/sender.py /dev/shm/imu.dat imu >> /tmp/imu_sender.log
+*/5 *	* * *	root	/app/monitoring/sender/sender.py /dev/shm/temp.dat temp >> /tmp/temp_sender.log

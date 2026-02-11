@@ -1,0 +1,12 @@
+[Unit]
+Description=Modem Status Checker
+After=network.target
+
+[Service]
+ExecStart=/app/monitoring/modem/check_status.py
+Restart=always
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=Accelerometer Event Processor
+After=multi-user.target
+Wants=h3lis331dl-bus0.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /app/monitoring/accel/process_accel.py
+WorkingDirectory=/app/monitoring/accel
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+Nice=-5
+SyslogIdentifier=process-accel
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

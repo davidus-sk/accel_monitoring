@@ -1,0 +1,10 @@
+/tmp/*.log {
+    hourly
+    rotate 3
+    maxsize 40M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}

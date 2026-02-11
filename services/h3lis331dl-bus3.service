@@ -1,0 +1,27 @@
+[Unit]
+Description=H3LIS331DL Accelerometer Logger (i2c-3, software)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/app/monitoring/accel
+ExecStart=/usr/bin/python3 /app/monitoring/accel/h3lis331dl.py 3
+
+Restart=always
+RestartSec=5
+
+Nice=-5
+TimeoutStartSec=30
+TimeoutStopSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=accel-bus3
+
+Environment="PYTHONUNBUFFERED=1"
+RequiresMountsFor=/dev/shm
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

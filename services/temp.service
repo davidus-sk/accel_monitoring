@@ -1,0 +1,42 @@
+[Unit]
+Description=AHT30 Temperature Sensor Data Logger
+Documentation=Temperature sampling service for continuous monitoring
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/app/monitoring/temp
+ExecStart=/usr/bin/python3 /app/monitoring/temp/temp.py
+
+# Restart configuration - always restart on failure
+Restart=always
+RestartSec=5
+
+# Resource limits and security
+Nice=-5
+IOSchedulingClass=realtime
+IOSchedulingPriority=0
+
+# Give the service time to start
+TimeoutStartSec=30
+TimeoutStopSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=temp-logger
+
+# Environment
+Environment="PYTHONUNBUFFERED=1"
+
+# Ensure /dev/shm is available
+RequiresMountsFor=/dev/shm
+
+# If the service fails to start, keep retrying
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target
+
