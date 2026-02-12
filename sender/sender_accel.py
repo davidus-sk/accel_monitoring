@@ -34,7 +34,7 @@ def get_modem_imei_signal():
         log(f"Warning: Modem check failed: {e}")
         return ["Unknown", "0"]
 
-def gzip_post_and_remove(file_path, url, data_type, imei, signal):
+def gzip_post_and_remove(file_path, url, type, imei, signal):
     """Processes a single file: Gzip -> POST -> Delete."""
     try:
         if not os.path.exists(file_path):
@@ -59,14 +59,9 @@ def gzip_post_and_remove(file_path, url, data_type, imei, signal):
             'User-Agent': 'python-gzip-uploader/1.0'
         }
 
-        params = {
-            'type': data_type,
-            'imei': imei,
-            'signal': signal,
-            'filename': os.path.basename(file_path)
-        }
+        url = f"{url}?type={type}&imei={imei}&signal={signal}"
 
-        response = requests.post(url, params=params, data=compressed_data, headers=headers, timeout=900)
+        response = requests.post(url, data=compressed_data, headers=headers, timeout=900)
         response.raise_for_status()
 
         # 7. REMOVAL: Only occurs if response was successful (2xx)
