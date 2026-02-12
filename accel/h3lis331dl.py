@@ -3,6 +3,7 @@
 H3LIS331DL Dual High-G Accelerometer Logger
 Binary output, per-sensor files, 5MB rotation with atomic rename.
 Optional TCP live stream for field validation.
+Systemd watchdog integration for ghost process detection.
 
 Usage:
   python3 h3lis331dl.py <i2c_bus_number> [tcp_port]
@@ -20,6 +21,10 @@ Output files:
 Live stream (when port specified and client connected):
   nc localhost 6000
   Output: timestamp,bus,addr,accel_x_g,accel_y_g,accel_z_g
+
+Service file requires:
+  Type=notify
+  WatchdogSec=30
 
 Binary format:
   Header (22 bytes):
@@ -48,6 +53,7 @@ import traceback
 import os
 import logging
 import socket
+import fcntl
 
 # --------- CONFIGURATION ---------
 
@@ -77,9 +83,9 @@ SAMPLE_INTERVAL = 1.0 / SAMPLE_RATE_HZ
 # Binary format
 FILE_MAGIC      = b"ACLB"
 FILE_VERSION    = 1
-HEADER_FORMAT   = "<4sBBBBHfd"   # magic(4) ver(1) bus(1) addr(1) fs(1) rate(2) sens(4) start_ts(8)
+HEADER_FORMAT   = "<4sBBBBHfd"
 HEADER_SIZE     = struct.calcsize(HEADER_FORMAT)  # 22 bytes
-RECORD_FORMAT   = "<dfff"        # timestamp(8) ax(4) ay(4) az(4)
+RECORD_FORMAT   = "<dfff"
 RECORD_SIZE     = struct.calcsize(RECORD_FORMAT)   # 20 bytes
 
 # File output
@@ -91,11 +97,48 @@ MAX_CONSECUTIVE_ERRORS = 50
 ERROR_COOLDOWN_SEC     = 0.5
 I2C_RESET_COOLDOWN_SEC = 3.0
 
+# I2C kernel timeout — prevents process from going into indefinite D-state
+# ioctl I2C_TIMEOUT = 0x0702, value in 10ms units (kernel jiffies)
+I2C_TIMEOUT_IOCTL    = 0x0702
+I2C_TIMEOUT_JIFFIES  = 100   # 1 second max wait per I2C transaction
+
 # Live stream
 ACCEPT_CHECK_INTERVAL  = 100  # check for new client every N samples
 
+# Watchdog — ping systemd every ~1 second
+WATCHDOG_INTERVAL = 1000  # every N samples
+
 # Logging
 LOG_DIR = "/tmp"
+
+
+# --------- SYSTEMD WATCHDOG ---------
+
+def sd_notify(msg):
+    """Send notification to systemd. Silent no-op if not under systemd."""
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        try:
+            if addr[0] == "@":
+                addr = "\0" + addr[1:]
+            sock.sendto(msg.encode(), addr)
+        finally:
+            sock.close()
+    except Exception:
+        pass
+
+
+def watchdog_ping():
+    """Tell systemd we are still alive."""
+    sd_notify("WATCHDOG=1")
+
+
+def sd_ready():
+    """Tell systemd the service has started successfully."""
+    sd_notify("READY=1")
 
 
 # --------- SENSOR READ ---------
@@ -163,6 +206,10 @@ class SensorFile:
             self.fd.close()
         except Exception as e:
             self.log.error("Error closing %s: %s", self.tmp_path, e)
+            try:
+                self.fd.close()
+            except Exception:
+                pass
             self.fd = None
             return
 
@@ -185,7 +232,11 @@ class SensorFile:
 
         # Flush periodically (every 100 samples)
         if self.samples_in_file % 100 == 0:
-            self.fd.flush()
+            try:
+                self.fd.flush()
+            except Exception as e:
+                self.log.error("Flush error: %s", e)
+                self._seal_file()
 
         # Rotate if file is full
         if self.bytes_written >= MAX_FILE_BYTES:
@@ -224,6 +275,11 @@ class LiveStream:
         except Exception as e:
             self.log.error("Failed to start live stream on port %d: %s",
                            self.port, e)
+            if self.server_sock is not None:
+                try:
+                    self.server_sock.close()
+                except Exception:
+                    pass
             self.server_sock = None
             return False
 
@@ -234,7 +290,6 @@ class LiveStream:
         try:
             conn, addr = self.server_sock.accept()
             if self.client_sock is not None:
-                # Already have a client, reject new one
                 try:
                     conn.sendall(b"ERROR: another client is connected\n")
                     conn.close()
@@ -356,11 +411,26 @@ class AccelLogger:
                     self.bus.close()
                 except Exception:
                     pass
+                self.bus = None
             self.bus = smbus2.SMBus(self.i2c_bus)
             time.sleep(0.01)
+
+            # Set kernel-level I2C timeout to prevent indefinite D-state.
+            # Without this, a stuck sensor can block the read_i2c_block_data()
+            # call forever, putting the process into uninterruptible sleep.
+            try:
+                fcntl.ioctl(self.bus.fd, I2C_TIMEOUT_IOCTL,
+                            I2C_TIMEOUT_JIFFIES)
+                self.log.info("I2C timeout set to %dms",
+                              I2C_TIMEOUT_JIFFIES * 10)
+            except Exception as e:
+                self.log.warning("Could not set I2C timeout: %s "
+                                 "(process may D-state on stuck sensor)", e)
+
             return True
         except Exception as e:
             self.log.error("Failed to open i2c-%d: %s", self.i2c_bus, e)
+            self.bus = None
             return False
 
     def init_sensor(self, addr, label):
@@ -380,6 +450,9 @@ class AccelLogger:
         except OSError as e:
             self.log.warning("[%s] 0x%02x: not found (%s)", label, addr, e)
             return False
+        except Exception as e:
+            self.log.warning("[%s] 0x%02x: init failed (%s)", label, addr, e)
+            return False
 
     def init_all_sensors(self):
         if not self.open_bus():
@@ -392,7 +465,6 @@ class AccelLogger:
 
     def _open_sensor_files(self):
         """Create a SensorFile for each active sensor."""
-        # Close any existing files
         for sf in self.sensor_files.values():
             sf.close()
         self.sensor_files = {}
@@ -406,6 +478,7 @@ class AccelLogger:
         time.sleep(I2C_RESET_COOLDOWN_SEC)
 
         while self.running:
+            watchdog_ping()
             self.active_sensors = self.init_all_sensors()
             if self.active_sensors:
                 break
@@ -437,6 +510,7 @@ class AccelLogger:
 
         # Init sensors with retry
         while self.running:
+            watchdog_ping()
             self.active_sensors = self.init_all_sensors()
             if self.active_sensors:
                 break
@@ -449,6 +523,10 @@ class AccelLogger:
 
         self._open_sensor_files()
         self.log.info("Sampling %d sensor(s)", len(self.active_sensors))
+
+        # Notify systemd we are ready and alive
+        sd_ready()
+        watchdog_ping()
 
         last_status_time = time.time()
         next_sample_time = time.time()
@@ -464,6 +542,10 @@ class AccelLogger:
                 ts = time.time()
                 next_sample_time = ts + SAMPLE_INTERVAL
 
+                # Watchdog ping every ~1 second
+                if loop_count % WATCHDOG_INTERVAL == 0:
+                    watchdog_ping()
+
                 # Check for live stream client periodically
                 if self.live_stream is not None and \
                         loop_count % ACCEPT_CHECK_INTERVAL == 0:
@@ -476,7 +558,6 @@ class AccelLogger:
                     ax, ay, az = read_accel(self.bus, s["addr"])
                     self.sensor_files[s["addr"]].write_sample(ts, ax, ay, az)
 
-                    # Send to live stream only if client connected
                     if streaming:
                         self.live_stream.send_sample(
                             ts, s["addr"], ax, ay, az)
@@ -534,8 +615,14 @@ class AccelLogger:
         try:
             for sf in self.sensor_files.values():
                 sf.close()
+        except Exception as e:
+            self.log.error("File cleanup error: %s", e)
+        try:
             if self.live_stream is not None:
                 self.live_stream.close()
+        except Exception as e:
+            self.log.error("Stream cleanup error: %s", e)
+        try:
             if self.bus:
                 for s in self.active_sensors:
                     try:
@@ -544,7 +631,7 @@ class AccelLogger:
                         pass
                 self.bus.close()
         except Exception as e:
-            self.log.error("Cleanup error: %s", e)
+            self.log.error("Bus cleanup error: %s", e)
         self.log.info("Stopped (%d samples, %d errors)",
                       self.sample_count, self.error_count)
 

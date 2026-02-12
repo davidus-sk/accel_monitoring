@@ -3,7 +3,8 @@ Description=H3LIS331DL Accelerometer Logger (i2c-3, software)
 After=network.target
 
 [Service]
-Type=simple
+Type=notify
+WatchdogSec=30
 User=root
 WorkingDirectory=/app/monitoring/accel
 ExecStart=/usr/bin/python3 /app/monitoring/accel/h3lis331dl.py 3 6001
