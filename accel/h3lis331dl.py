@@ -32,9 +32,9 @@ Binary format:
     1B  version     1
     1B  bus         i2c bus number
     1B  addr        sensor address
-    1B  full_scale  100 (+-100g)
+    1B  full_scale  200 (+-200g)
     2B  sample_rate uint16 (1000)
-    4B  sensitivity float32 (0.049)
+    4B  sensitivity float32 (0.098)
     8B  start_ts    float64 (unix timestamp of first sample)
 
   Records (20 bytes each):
@@ -72,11 +72,11 @@ OUT_X_L    = 0x28
 
 EXPECTED_WHO_AM_I = 0x32
 
-# +-100g, 1000Hz, BDU
+# +-200g, 1000Hz, BDU
 CTRL_REG1_VAL = 0x3F
-CTRL_REG4_VAL = 0x80
-SENSITIVITY   = 0.049
-FULL_SCALE    = 100
+CTRL_REG4_VAL = 0x90          # BDU=1, FS=01 (+-200g)  — was 0x80 for +-100g
+SENSITIVITY   = 0.098         # g/digit at +-200g       — was 0.049 for +-100g
+FULL_SCALE    = 200           #                         — was 100
 SAMPLE_RATE_HZ = 1000
 SAMPLE_INTERVAL = 1.0 / SAMPLE_RATE_HZ
 
@@ -445,7 +445,7 @@ class AccelLogger:
             self.bus.write_byte_data(addr, CTRL_REG2, 0x00)
             self.bus.write_byte_data(addr, CTRL_REG3, 0x00)
             time.sleep(0.005)
-            self.log.info("[%s] 0x%02x: ready (+-100g, 1000Hz)", label, addr)
+            self.log.info("[%s] 0x%02x: ready (+-200g, 1000Hz)", label, addr)
             return True
         except OSError as e:
             self.log.warning("[%s] 0x%02x: not found (%s)", label, addr, e)
@@ -492,7 +492,7 @@ class AccelLogger:
                           len(self.active_sensors))
 
     def run(self):
-        self.log.info("Starting (i2c-%d, +-100g, %dHz, binary output)",
+        self.log.info("Starting (i2c-%d, +-200g, %dHz, binary output)",
                       self.i2c_bus, SAMPLE_RATE_HZ)
         self.log.info("Record: %dB header + %dB/sample, rotate at %dMB",
                       HEADER_SIZE, RECORD_SIZE, MAX_FILE_BYTES // (1024 * 1024))
