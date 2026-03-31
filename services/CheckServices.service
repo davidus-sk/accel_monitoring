@@ -3,7 +3,7 @@ Description=Modem Status Checker
 After=network.target
 
 [Service]
-ExecStart=/app/monitoring/checker/check_services.py
+ExecStart=/app/monitoring/checker/check_services.py "h3lis331dl.py 0" "h3lis331dl.py 1"
 Restart=always
 User=root
 Group=root

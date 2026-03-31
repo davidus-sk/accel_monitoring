@@ -83,8 +83,8 @@ if __name__ == "__main__":
     # - "python3" (will be running when you execute this script)
     # - "a_fake_process_name_123" (should not be running)
 
-    executable_a = "imu.py"
-    executable_b = "temp.py"
+    executable_a = sys.argv[1]
+    executable_b = sys.argv[2]
 
     while True:
         print(f"Checking for '{executable_a}' and '{executable_b}'...")
