@@ -1,0 +1,1 @@
+*/5 *   * * *   root    /app/monitoring/sender/sender_accel.py "/dev/shm/accel*.dat" accel >> /tmp/sender_accel.log
