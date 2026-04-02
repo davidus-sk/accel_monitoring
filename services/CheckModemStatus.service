@@ -1,10 +1,12 @@
 [Unit]
 Description=Modem Status Checker
 After=network.target
+StartLimitIntervalSec=0
 
 [Service]
 ExecStart=/app/monitoring/modem/check_status.py
 Restart=always
+RestartSec=5s
 User=root
 Group=root
 

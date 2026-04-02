@@ -95,7 +95,7 @@ if __name__ == "__main__":
 
         modem_list = get_modem_list()
 
-        if list:
+        if modem_list:
             status = get_modem_status(modem_list[0])
 
             if status:
