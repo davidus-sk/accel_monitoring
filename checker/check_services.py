@@ -98,13 +98,13 @@ if __name__ == "__main__":
 
         if status == 2:
             blink = True
-            time.sleep(0.5)
+            time.sleep(0.1)
             GPIO.output(24, GPIO.LOW)
             time.sleep(1)
 
         if status == 1:
             blink = True
-            time.sleep(0.5)
+            time.sleep(0.1)
             GPIO.output(24, GPIO.LOW)
             time.sleep(3)
 
@@ -113,9 +113,3 @@ if __name__ == "__main__":
             GPIO.output(24, GPIO.LOW)
             time.sleep(2)
 
-    # --- Example test with known processes ---
-    # print("\n" + "="*30)
-    # print("Testing with 'systemd' and 'a_fake_process_123'...")
-    # status_test = check_executables("systemd", "a_fake_process_123")
-    # print(f"Test function returned: {status_test}")
-    # print("="*30)

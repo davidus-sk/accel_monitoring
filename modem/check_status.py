@@ -91,13 +91,14 @@ if __name__ == "__main__":
     while True:
         # Turn on
         GPIO.output(23, GPIO.HIGH)
-        time.sleep(1)
+        time.sleep(0.1)
 
-        list = get_modem_list()
+        modem_list = get_modem_list()
 
         if list:
-            status = get_modem_status(list[0])
+            status = get_modem_status(modem_list[0])
 
-            if not status:
+            if status:
                 GPIO.output(23, GPIO.LOW)
-                time.sleep(1)
+
+        time.sleep(1)
