@@ -6,13 +6,24 @@ import sys
 import RPi.GPIO as GPIO
 import time
 
-def get_modem_status():
+def get_modem_list():
+    """Returns a list of modem indices found on the system."""
+    try:
+        result = subprocess.check_output(["mmcli", "-L", "-J"], stderr=subprocess.STDOUT)
+        data = json.loads(result)
+        # Extract indices from the 'modem-list' array
+        return [m.split('/')[-1] for m in data.get("modem-list", [])]
+    except Exception as e:
+        print(f"Error listing modems: {e}")
+        return []
+
+def get_modem_status(index):
     """
     Runs 'mmcli -m 0 -J' to get modem info as JSON and parses the
     connection status.
     """
     # The command to run, split into a list for subprocess
-    command = ["mmcli", "-m", "0", "-J"]
+    command = ["mmcli", "-m", index, "-J"]
 
     try:
         # Run the command
@@ -82,8 +93,11 @@ if __name__ == "__main__":
         GPIO.output(23, GPIO.HIGH)
         time.sleep(1)
 
-        status = get_modem_status()
+        list = get_modem_list()
 
-        if not status:
-            GPIO.output(23, GPIO.LOW)
-            time.sleep(1)
+        if list:
+            status = get_modem_status(list[0])
+
+            if not status:
+                GPIO.output(23, GPIO.LOW)
+                time.sleep(1)

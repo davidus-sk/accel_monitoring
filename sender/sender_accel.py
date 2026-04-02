@@ -20,9 +20,20 @@ def log(message):
     current_time = now.strftime("%Y-%m-%d %H:%M:%S")
     print(f"{current_time} > {message}")
 
-def get_modem_imei_signal():
+def get_modem_list():
+    """Returns a list of modem indices found on the system."""
+    try:
+        result = subprocess.check_output(["mmcli", "-L", "-J"], stderr=subprocess.STDOUT)
+        data = json.loads(result)
+        # Extract indices from the 'modem-list' array
+        return [m.split('/')[-1] for m in data.get("modem-list", [])]
+    except Exception as e:
+        print(f"Error listing modems: {e}")
+        return []
+
+def get_modem_imei_signal(index):
     """Retrieves modem IMEI and signal; returns defaults on failure."""
-    command = ["mmcli", "-m", "0", "-J"]
+    command = ["mmcli", "-m", index, "-J"]
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8')
         modem_data = json.loads(result.stdout)
@@ -92,7 +103,13 @@ if __name__ == "__main__":
             sys.exit(0)
 
         log(f"--- Starting Batch: {len(files)} files ---")
-        imei, signal = get_modem_imei_signal()
+
+        modem_list = get_modem_list()
+        if not modem_list:
+            log(f"No modems found")
+            sys.exit(0)
+
+        imei, signal = get_modem_imei_signal(modem_list[0])
 
         success_count = 0
         for f_path in files:
