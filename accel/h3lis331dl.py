@@ -17,6 +17,7 @@ Sensors per bus (auto-detected):
 Output files:
   /dev/shm/raw/accel_bus0_0x19_1770773050.dat.tmp  (writing)
   /dev/shm/raw/accel_bus0_0x19_1770773050.dat      (sealed, ready for analysis)
+  /dev/shm/max_g_0_0x19.dat                        (all-time max g from valid events)
 
 Live stream (when port specified and client connected):
   nc localhost 6000
@@ -32,9 +33,9 @@ Binary format:
     1B  version     1
     1B  bus         i2c bus number
     1B  addr        sensor address
-    1B  full_scale  200 (+-200g)
+    1B  full_scale  (100/200/400)
     2B  sample_rate uint16 (1000)
-    4B  sensitivity float32 (0.098)
+    4B  sensitivity float32
     8B  start_ts    float64 (unix timestamp of first sample)
 
   Records (20 bytes each):
@@ -72,11 +73,19 @@ OUT_X_L    = 0x28
 
 EXPECTED_WHO_AM_I = 0x32
 
-# +-200g, 1000Hz, BDU
-CTRL_REG1_VAL = 0x3F
-CTRL_REG4_VAL = 0x90          # BDU=1, FS=01 (+-200g)  — was 0x80 for +-100g
-SENSITIVITY   = 0.098         # g/digit at +-200g       — was 0.049 for +-100g
-FULL_SCALE    = 200           #                         — was 100
+# --------- G-RANGE CONFIG ---------
+# Change this one value: 100, 200, or 400
+FULL_SCALE = 200
+
+_FS_TABLE = {
+    100: (0x80, 0.049),
+    200: (0x90, 0.098),
+    400: (0xB0, 0.195),
+}
+CTRL_REG4_VAL, SENSITIVITY = _FS_TABLE[FULL_SCALE]
+
+# Sampling
+CTRL_REG1_VAL  = 0x3F
 SAMPLE_RATE_HZ = 1000
 SAMPLE_INTERVAL = 1.0 / SAMPLE_RATE_HZ
 
@@ -156,6 +165,46 @@ def read_accel(bus, addr):
     ay = (raw_y >> 4) * SENSITIVITY
     az = (raw_z >> 4) * SENSITIVITY
     return ax, ay, az
+
+
+# --------- MAX G TRACKER ---------
+
+class MaxGTracker:
+    """Tracks all-time max g-force from validated events only.
+    Requires 3 consecutive samples above 5g to confirm a real event.
+    Single-sample spikes are rejected as noise."""
+
+    CONSEC_REQUIRED = 3
+    THRESHOLD = 5.0
+
+    def __init__(self, bus_num, addr):
+        self.path = "/dev/shm/max_g_%d_0x%02x.dat" % (bus_num, addr)
+        self.max_g = 0.0
+        self.consec_count = 0
+        self.in_event = False
+
+    def update(self, mag):
+        if mag > self.THRESHOLD:
+            self.consec_count += 1
+            if self.consec_count >= self.CONSEC_REQUIRED:
+                self.in_event = True
+        else:
+            if self.in_event:
+                self.in_event = False
+            self.consec_count = 0
+
+        if self.in_event and mag > self.max_g:
+            self.max_g = mag
+            self._write()
+
+    def _write(self):
+        try:
+            tmp = self.path + ".tmp"
+            with open(tmp, "w") as f:
+                f.write("%.2f\n" % self.max_g)
+            os.rename(tmp, self.path)
+        except Exception:
+            pass
 
 
 # --------- PER-SENSOR FILE WRITER ---------
@@ -371,6 +420,7 @@ class AccelLogger:
         self.consecutive_errors = 0
         self.active_sensors = []
         self.sensor_files = {}
+        self.max_g_trackers = {}
         self.live_stream = None
 
         log_path = os.path.join(LOG_DIR, f"accel_bus{i2c_bus}.log")
@@ -415,9 +465,6 @@ class AccelLogger:
             self.bus = smbus2.SMBus(self.i2c_bus)
             time.sleep(0.01)
 
-            # Set kernel-level I2C timeout to prevent indefinite D-state.
-            # Without this, a stuck sensor can block the read_i2c_block_data()
-            # call forever, putting the process into uninterruptible sleep.
             try:
                 fcntl.ioctl(self.bus.fd, I2C_TIMEOUT_IOCTL,
                             I2C_TIMEOUT_JIFFIES)
@@ -445,7 +492,7 @@ class AccelLogger:
             self.bus.write_byte_data(addr, CTRL_REG2, 0x00)
             self.bus.write_byte_data(addr, CTRL_REG3, 0x00)
             time.sleep(0.005)
-            self.log.info("[%s] 0x%02x: ready (+-200g, 1000Hz)", label, addr)
+            self.log.info("[%s] 0x%02x: ready (+-%dg, %dHz)", label, addr, FULL_SCALE, SAMPLE_RATE_HZ)
             return True
         except OSError as e:
             self.log.warning("[%s] 0x%02x: not found (%s)", label, addr, e)
@@ -464,13 +511,16 @@ class AccelLogger:
         return active
 
     def _open_sensor_files(self):
-        """Create a SensorFile for each active sensor."""
+        """Create a SensorFile and MaxGTracker for each active sensor."""
         for sf in self.sensor_files.values():
             sf.close()
         self.sensor_files = {}
+        self.max_g_trackers = {}
         for s in self.active_sensors:
             self.sensor_files[s["addr"]] = SensorFile(
                 self.i2c_bus, s["addr"], self.log)
+            self.max_g_trackers[s["addr"]] = MaxGTracker(
+                self.i2c_bus, s["addr"])
 
     def recover(self):
         self.log.info("Recovery started")
@@ -492,8 +542,8 @@ class AccelLogger:
                           len(self.active_sensors))
 
     def run(self):
-        self.log.info("Starting (i2c-%d, +-200g, %dHz, binary output)",
-                      self.i2c_bus, SAMPLE_RATE_HZ)
+        self.log.info("Starting (i2c-%d, +-%dg, %dHz, binary output)",
+                      self.i2c_bus, FULL_SCALE, SAMPLE_RATE_HZ)
         self.log.info("Record: %dB header + %dB/sample, rotate at %dMB",
                       HEADER_SIZE, RECORD_SIZE, MAX_FILE_BYTES // (1024 * 1024))
 
@@ -557,6 +607,8 @@ class AccelLogger:
                 for s in self.active_sensors:
                     ax, ay, az = read_accel(self.bus, s["addr"])
                     self.sensor_files[s["addr"]].write_sample(ts, ax, ay, az)
+                    self.max_g_trackers[s["addr"]].update(
+                        (ax*ax + ay*ay + az*az) ** 0.5)
 
                     if streaming:
                         self.live_stream.send_sample(
@@ -571,9 +623,11 @@ class AccelLogger:
                     file_info = []
                     for s in self.active_sensors:
                         sf = self.sensor_files[s["addr"]]
-                        file_info.append("0x%02x:%dKB" % (
+                        mg = self.max_g_trackers[s["addr"]]
+                        file_info.append("0x%02x:%dKB:max=%.2fg" % (
                             s["addr"],
-                            sf.bytes_written // 1024 if sf.fd else 0))
+                            sf.bytes_written // 1024 if sf.fd else 0,
+                            mg.max_g))
                     stream_status = ""
                     if self.live_stream is not None:
                         if self.live_stream.has_client():

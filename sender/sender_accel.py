@@ -45,7 +45,7 @@ def get_modem_imei_signal(index):
         log(f"Warning: Modem check failed: {e}")
         return ["Unknown", "0"]
 
-def gzip_post_and_remove(file_path, url, type, imei, signal):
+def gzip_post_and_remove(file_path, url, type, imei, signal, max_g):
     """Processes a single file: Gzip -> POST -> Delete."""
     try:
         if not os.path.exists(file_path):
@@ -70,7 +70,7 @@ def gzip_post_and_remove(file_path, url, type, imei, signal):
             'User-Agent': 'python-gzip-uploader/1.0'
         }
 
-        url = f"{url}?type={type}&imei={imei}&signal={signal}"
+        url = f"{url}?type={type}&imei={imei}&signal={signal}&max_g={max_g}"
 
         response = requests.post(url, data=compressed_data, headers=headers, timeout=900)
         response.raise_for_status()
@@ -111,9 +111,17 @@ if __name__ == "__main__":
 
         imei, signal = get_modem_imei_signal(modem_list[0])
 
+        max_g = 0
+        max_g_files = glob.glob("/dev/shm/max_g_*")
+        if max_g_files:
+            for f_path in max_g_files:
+                with open(f_path, 'r') as file:
+                    max = float(file.read())
+                    max_g = max if max > max_g else max_g
+
         success_count = 0
         for f_path in files:
-            if gzip_post_and_remove(f_path, POST_URL, args.type, imei, signal):
+            if gzip_post_and_remove(f_path, POST_URL, args.type, imei, signal, max_g):
                 success_count += 1
 
         log(f"Batch complete. {success_count}/{len(files)} files removed.")
