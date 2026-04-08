@@ -112,12 +112,15 @@ if __name__ == "__main__":
         imei, signal = get_modem_imei_signal(modem_list[0])
 
         max_g = 0
-        max_g_files = glob.glob("/dev/shm/max_g_*")
+        max_g_files = glob.glob("/dev/shm/max_g_*.dat")
         if max_g_files:
             for f_path in max_g_files:
                 with open(f_path, 'r') as file:
                     max = float(file.read())
-                    max_g = max if max > max_g else max_g
+
+                max_g = max if max > max_g else max_g
+
+            log(f"Current max is {max_g}.")
 
         success_count = 0
         for f_path in files:
