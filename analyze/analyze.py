@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import pandas as pd
-import sys
+import numpy as np
 import argparse
 from datetime import datetime
 
@@ -17,32 +17,30 @@ def find_highest_sustained_impact(file_path, window_ms):
     df['dt'] = pd.to_datetime(df['timestamp'], unit='s')
     df = df.sort_values('dt').set_index('dt')
 
-    axes = ['x', 'y', 'z']
-    df_abs = df[axes].abs()
+    # Calculate Magnitude: sqrt(x^2 + y^2 + z^2)
+    df['magnitude'] = np.sqrt(df['x']**2 + df['y']**2 + df['z']**2)
 
-    highest_impact = 0
-    impact_details = None
+    # Calculate the rolling minimum of the magnitude over the time window.
+    # This identifies the highest level that the magnitude NEVER dropped
+    # below during the Xms duration.
+    window_str = f'{window_ms}ms'
+    sustained_magnitude = df['magnitude'].rolling(window=window_str).min()
 
-    for axis in axes:
-        # Rolling minimum ensures the value was SUSTAINED for the duration
-        window_str = f'{window_ms}ms'
-        sustained_values = df_abs[axis].rolling(window=window_str).min()
+    max_val = sustained_magnitude.max()
 
-        max_val = sustained_values.max()
+    if pd.isna(max_val):
+        return None
 
-        if max_val > highest_impact:
-            highest_impact = max_val
-            end_time = sustained_values.idxmax()
-            impact_details = {
-                'axis': axis,
-                'value': max_val,
-                'end_time': end_time,
-                'bus_id': df.loc[end_time, 'bus_id'],
-                'sensor_id': df.loc[end_time, 'sensor_id'],
-                'timestamp': df.loc[end_time, 'timestamp']
-            }
+    # Identify the end of the window where this max sustained magnitude occurred
+    end_time = sustained_magnitude.idxmax()
 
-    return impact_details
+    return {
+        'value': max_val,
+        'end_time': end_time,
+        'bus_id': df.loc[end_time, 'bus_id'],
+        'sensor_id': df.loc[end_time, 'sensor_id'],
+        'timestamp': df.loc[end_time, 'timestamp']
+    }
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Detect sustained impacts in accelerometer data.")
@@ -60,7 +58,7 @@ if __name__ == "__main__":
         print(f"Input File: {args.input} | Window: {args.ms}ms\n")
 
         if result:
-            f.write(f"{result['timestamp']},{result['bus_id']},{result['sensor_id']},{result['axis']},{result['value']:.4f}\n")
+            f.write(f"{result['timestamp']},{result['bus_id']},{result['sensor_id']},{result['value']:.4f}\n")
             print(f"Analysis complete. Result appended to {args.output}")
         else:
             print("No data found.\n")
