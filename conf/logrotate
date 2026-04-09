@@ -1,5 +1,6 @@
 /tmp/*.log {
     daily
+    su root adm
     rotate 5
     missingok
     notifempty
