@@ -75,6 +75,11 @@ def gzip_post_and_remove(file_path, url, type, imei, signal, max_g):
         response = requests.post(url, data=compressed_data, headers=headers, timeout=900)
         response.raise_for_status()
 
+        # process file before deletion
+        now = datetime.now()
+        current_date = now.strftime("%Y-%m-%d")
+        subprocess.run(["/app/monitoring/analyze/analyze.py", file_path, "2", f"/tmp/data_{current_date}.log"], capture_output=True, text=True, check=True, encoding='utf-8')
+
         # 7. REMOVAL: Only occurs if response was successful (2xx)
         os.remove(file_path)
         log(f"Successfully uploaded and DELETED {os.path.basename(file_path)}")
