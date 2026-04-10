@@ -20,6 +20,29 @@ def log(message):
     current_time = now.strftime("%Y-%m-%d %H:%M:%S")
     print(f"{current_time} > {message}")
 
+def get_temperature():
+    command = ["/usr/bin/cat", "/sys/class/thermal/thermal_zone0/temp"]
+
+    try:
+        # Run the command
+        # capture_output=True: Captures stdout and stderr
+        # text=True: Decodes stdout and stderr as UTF-8 text
+        # check=True: Raises CalledProcessError if the command returns non-zero
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=True,
+            encoding='utf-8'
+        )
+
+        return int(result.stdout) / 1000
+
+    except Exception as e:
+        # Catch any other unexpected errors
+        log(f"An unexpected error occurred: {e}")
+        return False
+
 def get_modem_list():
     """Returns a list of modem indices found on the system."""
     try:
@@ -45,7 +68,7 @@ def get_modem_imei_signal(index):
         log(f"Warning: Modem check failed: {e}")
         return ["Unknown", "0"]
 
-def gzip_post_and_remove(file_path, url, type, imei, signal, max_g):
+def gzip_post_and_remove(file_path, url, type, imei, signal, max_g, temp):
     """Processes a single file: Gzip -> POST -> Delete."""
     try:
         if not os.path.exists(file_path):
@@ -70,7 +93,7 @@ def gzip_post_and_remove(file_path, url, type, imei, signal, max_g):
             'User-Agent': 'python-gzip-uploader/1.0'
         }
 
-        url = f"{url}?type={type}&imei={imei}&signal={signal}&max_g={max_g}"
+        url = f"{url}?type={type}&imei={imei}&signal={signal}&max_g={max_g}&temp={temp}"
 
         response = requests.post(url, data=compressed_data, headers=headers, timeout=900)
         response.raise_for_status()
@@ -115,6 +138,7 @@ if __name__ == "__main__":
             sys.exit(0)
 
         imei, signal = get_modem_imei_signal(modem_list[0])
+        temp = get_temperature()
 
         max_g = 0
         max_g_files = glob.glob("/dev/shm/max_g_*.dat")
@@ -129,7 +153,7 @@ if __name__ == "__main__":
 
         success_count = 0
         for f_path in files:
-            if gzip_post_and_remove(f_path, POST_URL, args.type, imei, signal, max_g):
+            if gzip_post_and_remove(f_path, POST_URL, args.type, imei, signal, max_g, temp):
                 success_count += 1
 
         log(f"Batch complete. {success_count}/{len(files)} files removed.")
