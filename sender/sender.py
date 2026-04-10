@@ -48,7 +48,7 @@ def get_temperature():
             encoding='utf-8'
         )
 
-        return intval(result.stdout) / 1000
+        return int(result.stdout) / 1000
 
     except Exception as e:
         # Catch any other unexpected errors
