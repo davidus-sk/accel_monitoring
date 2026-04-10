@@ -32,6 +32,29 @@ def run_once_script(type):
         log("Another instance of the script is already running. Exiting.")
         os._exit(1)
 
+def get_temperature():
+    command = ["/usr/bin/cat", "/sys/class/thermal/thermal_zone0/temp"]
+
+    try:
+        # Run the command
+        # capture_output=True: Captures stdout and stderr
+        # text=True: Decodes stdout and stderr as UTF-8 text
+        # check=True: Raises CalledProcessError if the command returns non-zero
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=True,
+            encoding='utf-8'
+        )
+
+        return intval(result.stdout) / 1000
+
+    except Exception as e:
+        # Catch any other unexpected errors
+        log(f"An unexpected error occurred: {e}")
+        return False
+
 def get_modem_imei_signal():
     """
     Runs 'mmcli -m 0 -J' to get modem info as JSON and parses the
@@ -96,7 +119,7 @@ def get_modem_imei_signal():
         log(f"An unexpected error occurred: {e}")
         return False
 
-def gzip_post_and_truncate(file_path, url, type, imei, signal):
+def gzip_post_and_truncate(file_path, url, type, imei, signal, temp):
     """
     Gzips a file, POSTs the compressed data to a URL, and truncates
     the original file if the POST is successful.
@@ -135,7 +158,7 @@ def gzip_post_and_truncate(file_path, url, type, imei, signal):
             'Content-Type': 'application/octet-stream', # Standard for binary data
             'User-Agent': 'python-gzip-uploader/1.0'
         }
-        url = f"{url}?type={type}&imei={imei}&signal={signal}"
+        url = f"{url}?type={type}&imei={imei}&signal={signal}&temp={temp}"
         log(f"Posting {len(compressed_data)} compressed bytes to {url}")
 
         # 5. Perform the POST request
@@ -223,10 +246,12 @@ if __name__ == "__main__":
         with open(lock_file, 'w') as f:
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
+            # Get supplemental data
             data = get_modem_imei_signal()
+            temp = get_temperature()
 
             # Use the filepath from the parsed arguments
-            if gzip_post_and_truncate(args.filepath, POST_URL, args.type, data[0], data[1]):
+            if gzip_post_and_truncate(args.filepath, POST_URL, args.type, data[0], data[1], temp):
                 log("Operation completed successfully.")
                 sys.exit(0)
             else:
