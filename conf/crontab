@@ -1,1 +1,2 @@
 */5 *   * * *   root    /app/monitoring/sender/sender_accel.py "/dev/shm/accel*.dat" accel >> /tmp/sender_accel.log
+5 0	* * *	root	/app/monitoring/analyze/group_email.py
