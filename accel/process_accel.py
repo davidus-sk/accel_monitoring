@@ -50,7 +50,7 @@ SCAN_INTERVAL_SEC = 10.0
 # Binary format (must match collector)
 FILE_MAGIC    = b"ACLB"
 FILE_VERSION  = 1
-HEADER_FORMAT = "<4sBBBBHfd"
+HEADER_FORMAT = "<4sBBBHHfd" # "<4sBBBBHfd"
 HEADER_SIZE   = struct.calcsize(HEADER_FORMAT)  # 22
 RECORD_FORMAT = "<dfff"
 RECORD_SIZE   = struct.calcsize(RECORD_FORMAT)  # 20

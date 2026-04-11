@@ -75,7 +75,7 @@ EXPECTED_WHO_AM_I = 0x32
 
 # --------- G-RANGE CONFIG ---------
 # Change this one value: 100, 200, or 400
-FULL_SCALE = 200
+FULL_SCALE = 400
 
 _FS_TABLE = {
     100: (0x80, 0.049),
@@ -92,7 +92,7 @@ SAMPLE_INTERVAL = 1.0 / SAMPLE_RATE_HZ
 # Binary format
 FILE_MAGIC      = b"ACLB"
 FILE_VERSION    = 1
-HEADER_FORMAT   = "<4sBBBBHfd"
+HEADER_FORMAT   = "<4sBBBHHfd" # "<4sBBBBHfd"
 HEADER_SIZE     = struct.calcsize(HEADER_FORMAT)  # 22 bytes
 RECORD_FORMAT   = "<dfff"
 RECORD_SIZE     = struct.calcsize(RECORD_FORMAT)   # 20 bytes
