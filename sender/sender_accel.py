@@ -101,7 +101,7 @@ def gzip_post_and_remove(file_path, url, type, imei, signal, max_g, temp):
         # process file before deletion
         now = datetime.now()
         current_date = now.strftime("%Y-%m-%d")
-        subprocess.run(["/app/monitoring/analyze/analyze.py", file_path, "1", f"/tmp/data_{current_date}.log"], capture_output=True, text=True, check=True, encoding='utf-8')
+        subprocess.run(["/app/monitoring/analyze/analyze.py", file_path, "1.3", f"/tmp/data_{current_date}.log"], capture_output=True, text=True, check=True, encoding='utf-8')
 
         # 7. REMOVAL: Only occurs if response was successful (2xx)
         os.remove(file_path)

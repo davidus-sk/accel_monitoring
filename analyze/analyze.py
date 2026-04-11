@@ -27,7 +27,7 @@ def find_highest_sustained_impact(file_path, window_ms):
     sustained_magnitude = df['magnitude'].rolling(window=window_str).min()
 
     max_val = sustained_magnitude.max()
-    median = df['magnitude'].median()
+    median = df['magnitude'].mean()
 
     if pd.isna(max_val):
         return None
@@ -47,7 +47,7 @@ def find_highest_sustained_impact(file_path, window_ms):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Detect sustained impacts in accelerometer data.")
     parser.add_argument("input", help="Path to the input CSV file")
-    parser.add_argument("ms", type=int, help="Sustained duration in milliseconds")
+    parser.add_argument("ms", type=float, help="Sustained duration in milliseconds")
     parser.add_argument("output", help="Path to the output log file")
 
     args = parser.parse_args()
