@@ -27,6 +27,7 @@ def find_highest_sustained_impact(file_path, window_ms):
     sustained_magnitude = df['magnitude'].rolling(window=window_str).min()
 
     max_val = sustained_magnitude.max()
+    median = df['magnitude'].median()
 
     if pd.isna(max_val):
         return None
@@ -36,6 +37,7 @@ def find_highest_sustained_impact(file_path, window_ms):
 
     return {
         'value': max_val,
+        'median': median,
         'end_time': end_time,
         'bus_id': df.loc[end_time, 'bus_id'],
         'sensor_id': df.loc[end_time, 'sensor_id'],
@@ -58,7 +60,7 @@ if __name__ == "__main__":
         print(f"Input File: {args.input} | Window: {args.ms}ms\n")
 
         if result:
-            f.write(f"{result['timestamp']},{result['bus_id']},{result['sensor_id']},{result['value']:.4f}\n")
+            f.write(f"{result['timestamp']},{result['bus_id']},{result['sensor_id']},{result['value']:.4f},{result['median']:.4f}\n")
             print(f"Analysis complete. Result appended to {args.output}")
         else:
             print("No data found.\n")

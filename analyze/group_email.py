@@ -93,7 +93,7 @@ def group_and_filter_impacts():
 
     print(f"Processing: {file_name}")
 
-    column_names = ['timestamp', 'bus_id', 'sensor_id', 'magnitude']
+    column_names = ['timestamp', 'bus_id', 'sensor_id', 'magnitude', 'median']
     try:
         df = pd.read_csv(file_name, names=column_names)
     except FileNotFoundError:
@@ -109,15 +109,14 @@ def group_and_filter_impacts():
 
     # 3. Group by 2-minute windows and pick the max magnitude
     reduced_df = (
-        df.groupby(pd.Grouper(key='dt', freq='2min'))
+        df.groupby(pd.Grouper(key='dt', freq='245s'))
         .apply(lambda x: x.loc[x['magnitude'].idxmax()] if not x.empty else None)
         .dropna()
         .reset_index(drop=True)
     )
 
-    # 4. Filter: Keep only events where magnitude > 7
-    # This removes anything 7.0 or less
-    filtered_df = reduced_df[reduced_df['magnitude'] > 7].copy()
+    # 4. Filter: Keep only events where magnitude > x
+    filtered_df = reduced_df[reduced_df['magnitude'] > 20].copy()
 
     # 5. Convert to final array for further processing
     # We drop the helper 'dt' column to keep the array clean
@@ -136,12 +135,13 @@ if __name__ == "__main__":
         body = """
         <html>
         <body>
-          <table cellspacing="0" cellpadding="5" border="5" width="600" style="width: 600px; border-collapse: collapse; border: 5px solid #cccccc;">
-            <tr><td colspan="3" style="background-color: #0b4f8a; color: #ffffff; padding: 10px; font-family: Arial, sans-serif; font-size: 16px; text-align: center; border: 5px solid #cccccc;"><b>Impact Report</b></td></tr>
+          <table cellspacing="0" cellpadding="5" border="5" width="700" style="width: 600px; border-collapse: collapse; border: 5px solid #cccccc;">
+            <tr><td colspan="4" style="background-color: #0b4f8a; color: #ffffff; padding: 10px; font-family: Arial, sans-serif; font-size: 16px; text-align: center; border: 5px solid #cccccc;"><b>Impact Report</b></td></tr>
             <tr>
-              <th width="34%" style="width: 50%; background-color: #337ab7; color: #ffffff; padding: 10px; font-family: Arial, sans-serif; font-size: 16px; text-align: left; border: 5px solid #cccccc;">Date&nbsp;and&nbsp;Time</th>
-              <th width="33%" style="width: 50%; background-color: #337ab7; color: #ffffff; padding: 10px; font-family: Arial, sans-serif; font-size: 16px; text-align: right; border: 5px solid #cccccc;">Sensor</th>
-              <th width="33%" style="width: 50%; background-color: #337ab7; color: #ffffff; padding: 10px; font-family: Arial, sans-serif; font-size: 16px; text-align: right; border: 5px solid #cccccc;">Max&nbsp;Magnitude</th>
+              <th width="25%" style="width: 25%; background-color: #337ab7; color: #ffffff; padding: 10px; font-family: Arial, sans-serif; font-size: 16px; text-align: left; border: 5px solid #cccccc;">Date&nbsp;and&nbsp;Time</th>
+              <th width="25%" style="width: 25%; background-color: #337ab7; color: #ffffff; padding: 10px; font-family: Arial, sans-serif; font-size: 16px; text-align: right; border: 5px solid #cccccc;">Sensor</th>
+              <th width="25%" style="width: 25%; background-color: #337ab7; color: #ffffff; padding: 10px; font-family: Arial, sans-serif; font-size: 16px; text-align: right; border: 5px solid #cccccc;">Max</th>
+              <th width="25%" style="width: 25%; background-color: #337ab7; color: #ffffff; padding: 10px; font-family: Arial, sans-serif; font-size: 16px; text-align: right; border: 5px solid #cccccc;">Median</th>
             </tr>
         """
 
@@ -152,13 +152,21 @@ if __name__ == "__main__":
 
             print(f"Time: {event['timestamp']} | Bus: {event['bus_id']} | Mag: {event['magnitude']:.2f}")
 
-            body += f"<tr><td style=\"padding: 10px; font-family: Arial, sans-serif; font-size: 14px; color: #333333; border: 5px solid #cccccc;\">{string_time}</td><td style=\"padding: 10px; font-family: Arial, sans-serif; font-size: 14px; color: #333333; border: 5px solid #cccccc;text-align: right;\">{event['sensor_id']}</td><td style=\"padding: 10px; font-family: Arial, sans-serif; font-size: 14px; color: #333333; border: 5px solid #cccccc;text-align: right;\">{event['magnitude']}</td></tr>"
+            body += f"""
+            <tr>
+              <td style="padding: 10px; font-family: Arial, sans-serif; font-size: 14px; color: #333333; border: 5px solid #cccccc;">{string_time}</td>
+              <td style="padding: 10px; font-family: Arial, sans-serif; font-size: 14px; color: #333333; border: 5px solid #cccccc;text-align: right;">{event['sensor_id']}</td>
+              <td style="padding: 10px; font-family: Arial, sans-serif; font-size: 14px; color: #333333; border: 5px solid #cccccc;text-align: right;">{event['magnitude']}g</td>
+              <td style="padding: 10px; font-family: Arial, sans-serif; font-size: 14px; color: #333333; border: 5px solid #cccccc;text-align: right;">{event['median']}g</td>
+            </tr>
+            """
+
             total_events += 1
 
         string_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         body += f"""
-            <tr><td colspan="3" style="background-color: #eeeeee; color: #000000; padding: 10px; font-family: Arial, sans-serif; font-size: 12px; text-align: center; border: 5px solid #cccccc;">&copy; 2025 LUCEON LLC. Generated on {string_time}. Event count: {total_events}.</td></tr>
+            <tr><td colspan="4" style="background-color: #eeeeee; color: #000000; padding: 10px; font-family: Arial, sans-serif; font-size: 12px; text-align: center; border: 5px solid #cccccc;">&copy; 2025 LUCEON LLC. Generated on {string_time}. Event count: {total_events}.</td></tr>
           </table>
         </body>
         </html>
