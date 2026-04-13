@@ -35,7 +35,7 @@ EVENT_DIR        = "/dev/shm"
 LOG_PATH         = "/tmp/process_accel.log"
 
 # Detection thresholds
-ABS_THRESHOLD_G  = 10.0
+ABS_THRESHOLD_G  = 15.0
 REL_MULTIPLIER   = 4.0
 RMS_WINDOW_SEC   = 2.0
 
